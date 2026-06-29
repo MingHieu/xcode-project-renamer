@@ -29,7 +29,7 @@ class XcodeProjectRenamer: NSObject {
     // MARK: - Properties
     
     let fileManager = FileManager.default
-    var processedPaths = [String]()
+    var processedPaths = Set<String>()
     
     let oldName: String
     let newName: String
@@ -71,10 +71,15 @@ class XcodeProjectRenamer: NSObject {
     }
     
     private func enumeratePath(_ path: String) {
-        let enumerator = fileManager.enumerator(atPath: path)
-        while let element = enumerator?.nextObject() as? String {
+        guard let enumerator = fileManager.enumerator(atPath: path) else { return }
+        
+        while let element = enumerator.nextObject() as? String {
             let itemPath = path.appending("/\(element)")
-            if !processedPaths.contains(itemPath) && !shouldSkip(element) {
+            guard !shouldSkip(element) else { continue }
+            
+            // ✅ Mark as processed BEFORE processing
+            if !processedPaths.contains(itemPath) {
+                processedPaths.insert(itemPath)
                 processPath(itemPath)
             }
         }
@@ -92,8 +97,6 @@ class XcodeProjectRenamer: NSObject {
             }
             renameItem(atPath: path)
         }
-        
-        processedPaths.append(path)
     }
     
     private func shouldSkip(_ element: String) -> Bool {
@@ -118,11 +121,11 @@ class XcodeProjectRenamer: NSObject {
     private func updateContentsOfFile(atPath path: String) {
         do {
             let oldContent = try String(contentsOfFile: path, encoding: .utf8)
-            if oldContent.contains(oldName) {
-                let newContent = oldContent.replacingOccurrences(of: oldName, with: newName)
-                try newContent.write(toFile: path, atomically: true, encoding: .utf8)
-                print("\(Color.Blue)-- Updated: \(path)")
-            }
+            guard oldContent.contains(oldName) else { return }
+            
+            let newContent = oldContent.replacingOccurrences(of: oldName, with: newName)
+            try newContent.write(toFile: path, atomically: true, encoding: .utf8)
+            print("\(Color.Blue)-- Updated: \(path)")
         } catch {
             print("\(Color.Red)Error while updating file: \(error.localizedDescription)\n")
         }
@@ -131,13 +134,20 @@ class XcodeProjectRenamer: NSObject {
     private func renameItem(atPath path: String) {
         do {
             let oldItemName = URL(fileURLWithPath: path).lastPathComponent
-            if oldItemName.contains(oldName) {
-                let newItemName = oldItemName.replacingOccurrences(of: oldName, with: newName)
-                let directoryURL = URL(fileURLWithPath: path).deletingLastPathComponent()
-                let newPath = directoryURL.appendingPathComponent(newItemName).path
-                try fileManager.moveItem(atPath: path, toPath: newPath)
-                print("\(Color.Magenta)-- Renamed: \(oldItemName) -> \(newItemName)")
-            }
+            
+            // ✅ Skip if already renamed or doesn’t contain old name
+            guard oldItemName.contains(oldName) else { return }
+            
+            let newItemName = oldItemName.replacingOccurrences(of: oldName, with: newName)
+            let directoryURL = URL(fileURLWithPath: path).deletingLastPathComponent()
+            let newPath = directoryURL.appendingPathComponent(newItemName).path
+            
+            try fileManager.moveItem(atPath: path, toPath: newPath)
+            print("\(Color.Magenta)-- Renamed: \(oldItemName) -> \(newItemName)")
+            
+            // ✅ Mark the new path as processed too (prevents double rename)
+            processedPaths.insert(newPath)
+            
         } catch {
             print("\(Color.Red)Error while renaming file: \(error.localizedDescription)")
         }
